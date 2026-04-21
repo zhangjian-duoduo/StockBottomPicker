@@ -1,0 +1,32 @@
+# Xcode
+*.xcodeproj/
+*.xcworkspace/
+*.xcuserstate
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# macOS
+.DS_Store
+._*
+
+# Build
+DerivedData/
+build/
+Logs/
+*.log
+
+# Swift Package Manager
+*.swiftpm/
+Packages/
+
+# Temporary files
+*.tmp
+*.bak
+*.swp
+*~
+
+# Part files (temporary download chunks)
+part*.json
