@@ -145,35 +145,44 @@ StockBottomPicker/
 
 - **地址**: `root@8.163.91.16`
 - **密码**: `6732501Fei@`
-- **数据目录**: `/root/stock-picker-data/`
+- **数据目录**: `/root/`
 - **HTTP端口**: 8888
-- **扫描脚本**: `/root/stock-picker-data/stock_scanner_v18.py`
+- **扫描脚本**: `/root/stock_scanner_v2.py`
 
 ### Crontab自动任务
 ```
-30 7 * * 1-5 cd /root/stock-picker-data && python3 stock_scanner_v18.py >> /tmp/scan_v18.log 2>&1
+40 15 * * 1-5 cd /root && python3 stock_scanner_v2.py >> /tmp/scan_v2.log 2>&1
 ```
-= 北京时间周一至周五 15:30 自动执行扫描
+= 北京时间周一至周五 15:40 自动执行全市场扫描
 
 ### HTTP服务启动
 ```bash
-cd /root/stock-picker-data
+cd /root
 python3 -m http.server 8888 --bind 0.0.0.0
 ```
 
-### Mac下载数据（通过SSH隧道）
-```bash
-# 建立隧道
-ssh -L 8889:127.0.0.1:8888 -f -N root@8.163.91.16
-
-# 下载（数据已分割成5份）
-for i in 0 1 2 3 4; do
-  curl -s --max-time 60 "http://localhost:8889/stock_part${i}.json" -o /tmp/part${i}.json
-done
-
-# 合并
-python3 -c "import json; ..."
+### 数据格式
+```json
+{
+  "generatedAt": "2026-04-21T15:40:00",
+  "totalStocks": 1152,
+  "newStockCount": 5,
+  "stocks": [
+    {
+      "id": "600004",
+      "name": "白云机场",
+      "isNewStock": true,   // 本次新增
+      "hasSTRisk": false,
+      ...
+    }
+  ]
+}
 ```
+
+### 新股票标记
+- 新股票（本次扫描新增）显示在列表前面
+- 新股票名称显示为**橙色**
+- 点击刷新按钮获取最新数据
 
 ---
 

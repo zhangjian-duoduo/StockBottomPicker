@@ -46,6 +46,9 @@ struct StockInfo: Codable, Identifiable {
     // 趋势分析
     let trendAnalysis: TrendAnalysis
 
+    // 新股票标记（本次扫描新增）
+    let isNewStock: Bool
+
     // K线数据（详情页用）
     let klineData: [KlineDay]?
 
@@ -59,6 +62,7 @@ struct StockInfo: Codable, Identifiable {
         case hasMacdBottomDivergence, macdDivergenceStrength
         case chipConcentration, chipLevel
         case hasSTRisk, stRiskReasons
+        case isNewStock
         case trendAnalysis, klineData
     }
 }
@@ -108,5 +112,6 @@ struct KlineDay: Codable, Identifiable {
 struct StockResponse: Codable {
     let generatedAt: String
     let totalStocks: Int
+    let newStockCount: Int?  // 新股票数量
     let stocks: [StockInfo]
 }

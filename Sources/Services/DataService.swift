@@ -9,9 +9,10 @@ class DataService: ObservableObject {
     @Published var isLoading = false
     @Published var errorMessage: String?
     @Published var lastUpdated: Date?
+    @Published var newStockCount: Int = 0  // 新股票数量
 
     // 远程API地址（阿里云 - gzip压缩版）
-    private let remoteURL = "http://8.163.91.16:8888/stock_data.json.gz"
+    private let remoteURL = "http://8.163.91.16:8888/stock_data.json"
 
     private init() {}
 
@@ -84,7 +85,8 @@ class DataService: ObservableObject {
                     let response = try decoder.decode(StockResponse.self, from: data)
                     self?.stocks = response.stocks
                     self?.lastUpdated = Date()
-                    print("[DataService] 从远程加载了 \(response.stocks.count) 只股票")
+                    self?.newStockCount = response.newStockCount ?? 0
+                    print("[DataService] 从远程加载了 \(response.stocks.count) 只股票，新股票: \(response.newStockCount ?? 0) 只")
                 } catch {
                     print("[DataService] 远程数据解析失败: \(error)")
                     self?.errorMessage = "数据格式错误"

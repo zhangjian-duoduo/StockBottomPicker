@@ -188,6 +188,7 @@ struct StockRowView: View {
                         .font(.subheadline)
                         .fontWeight(.medium)
                         .lineLimit(1)
+                        .foregroundColor(stock.isNewStock ? .orange : .primary)  // 新股票标橙
                     Text(stock.id)
                         .font(.caption2)
                         .foregroundColor(.secondary)
