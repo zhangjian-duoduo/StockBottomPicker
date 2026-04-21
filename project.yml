@@ -29,8 +29,13 @@ targets:
     sources:
       - path: Sources
         type: group
+        excludes:
+          - "**/*.py"
+          - "**/*.sh"
       - path: Resources
         type: group
+        excludes:
+          - "**/*.py"
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.stockpicker.hermes

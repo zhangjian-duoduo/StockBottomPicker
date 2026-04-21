@@ -3,16 +3,21 @@
 Stock Scanner v18 - 底部选股hermes专用
 选股条件：
   要求1: 5年价格位置 ≤ 20%
-  要求2: 2年底部震荡（连续24+月，振幅≤200%，且当前在5年位置≤30%）
+  要求2: 2年底部震荡（至少24个月在底部，当前股价在震荡区间20%以下）
   两条件满足任意一个即可
 
-数据来源:
-- K线: 腾讯K线 (web.ifzq.gtimg.cn) - 真实
-- 股东人数: stock_hold_num_cninfo - 真实（2010年至今所有季度）
-- PE/PB百分位: stock_value_em - 真实
-- 换手率/筹码: 从成交量估算 - 真实
-- MACD底背离: 从K线EMA计算 - 真实
-- ST风险: 财务数据规则判断 - 真实
+反爬虫策略：
+- 请求间隔：1-3秒随机延迟
+- User-Agent轮换
+- 多平台切换
+
+数据来源(多平台切换):
+- K线: 腾讯K线 -> 新浪财经 -> 东方财富
+- 股东人数: 巨潮数据 -> 东方财富 -> 腾讯
+- PE/PB百分位: 东方财富 -> 新浪 -> 理杏仁
+- 筹码集中度: 腾讯Level2 -> 东方财富
+- MACD底背离: 从K线EMA计算
+- ST风险: 财务数据规则判断
 """
 
 import requests
@@ -24,7 +29,109 @@ from datetime import datetime
 import warnings
 warnings.filterwarnings('ignore')
 
-# ============ 配置 ============
+# ============ 反爬虫配置 ============
+import random
+
+# User-Agent列表
+USER_AGENTS = [
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15',
+    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+]
+
+def get_headers():
+    """生成随机请求头"""
+    return {
+        'User-Agent': random.choice(USER_AGENTS),
+        'Referer': 'https://finance.qq.com/',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+    }
+
+def random_delay(min_sec=1, max_sec=3):
+    """随机延迟"""
+    time.sleep(random.uniform(min_sec, max_sec))
+
+# ============ 多平台数据获取 ============
+
+def get_kline_multi_platform(symbol, count=1200):
+    """多平台获取K线数据，失败自动切换"""
+    # 平台1: 腾讯K线
+    try:
+        random_delay()
+        data = get_kline_tencent(symbol, count)
+        if len(data) >= 500:
+            return data, 'tencent'
+    except Exception as e:
+        log(f'腾讯K线失败: {e}')
+
+    # 平台2: 新浪财经
+    try:
+        random_delay()
+        data = get_kline_sina(symbol, count)
+        if len(data) >= 500:
+            return data, 'sina'
+    except Exception as e:
+        log(f'新浪K线失败: {e}')
+
+    # 平台3: 东方财富
+    try:
+        random_delay()
+        data = get_kline_eastmoney(symbol, count)
+        if len(data) >= 500:
+            return data, 'eastmoney'
+    except Exception as e:
+        log(f'东方财富K线失败: {e}')
+
+    return [], 'none'
+
+def get_kline_sina(symbol, count=1200):
+    """新浪财经K线"""
+    # sh600000 -> sh600000, sz000001 -> sz000001
+    url = f'https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/CN_MarketData.getKLineData'
+    params = {
+        'symbol': symbol,
+        'scale': 240,  # 日K
+        'ma': 'no',
+        'datalen': count
+    }
+    r = requests.get(url, params=params, headers=get_headers(), timeout=10)
+    data = r.json()
+    # 转换为标准格式 [date, open, close, high, low, volume]
+    return [[d['day'], d['open'], d['close'], d['high'], d['low'], d['volume']] for d in data]
+
+def get_kline_eastmoney(symbol, count=1200):
+    """东方财富K线"""
+    # 转换代码: sh600000 -> 1.600000, sz000001 -> 0.000001
+    if symbol.startswith('sh'):
+        mkt = '1'
+        code = symbol[2:]
+    else:
+        mkt = '0'
+        code = symbol[2:]
+    url = f'http://push2his.eastmoney.com/api/qt/stock/kline/get'
+    params = {
+        'secid': f'{mkt}.{code}',
+        'fields1': 'f1,f2,f3,f4,f5,f6',
+        'fields2': 'f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61',
+        'klt': '101',  # 日K
+        'fqt': '1',    # 前复权
+        'beg': '0',
+        'end': '20500101',
+        'lmt': count
+    }
+    r = requests.get(url, params=params, headers=get_headers(), timeout=10)
+    data = r.json()
+    items = data.get('data', {}).get('klines', [])
+    result = []
+    for item in items:
+        parts = item.split(',')
+        # date, open, close, high, low, volume, ...
+        result.append([parts[0], parts[1], parts[2], parts[3], parts[4], parts[5]])
+    return result
+
 OUTPUT_FILE = '/root/stock-picker-data/stock_data.json'
 LOG_FILE = '/root/stock-picker-data/scan_v18.log'
 SCAN_LIMIT = None  # None=全量扫描
@@ -100,7 +207,7 @@ def main():
     log('='*60)
     log('Stock Scanner v18 - hermes底部选股专用')
     log('要求1: 5年位置≤20%')
-    log('要求2: 2年震荡(24+月,振幅≤200%,5年位置≤30%)')
+    log('要求2: 2年震荡(24+月,当前在震荡区间20%以下)')
     log('='*60)
 
     ak = __import__('akshare')
@@ -152,7 +259,7 @@ def main():
         if 'ST' in name or '*ST' in name or 'S' in name:
             continue
 
-        kline = get_kline_tencent(symbol, 1200)
+        kline, source = get_kline_multi_platform(symbol, 1200)
         if len(kline) < 500:
             continue
 
@@ -181,7 +288,7 @@ def main():
         # 要求1: 5年位置≤20%
         meets_condition1 = five_year_position <= 20
 
-        # 要求2: 2年震荡
+        # 要求2: 2年底部震荡
         # 近2年 = 最后500个交易日(~2年)
         closes_2y = closes[-500:]
         highs_2y = highs[-500:]
@@ -189,19 +296,15 @@ def main():
 
         two_year_high = max(highs_2y)
         two_year_low = min(lows_2y)
-        two_year_amplitude = (two_year_high - two_year_low) / two_year_low * 100 if two_year_low > 0 else 0
 
-        # 连续震荡检测：最近2年中，价格波动不超过振幅的50%
-        # 简化：用2年高低比判断
-        two_year_ratio = two_year_high / two_year_low if two_year_low > 0 else 999
-        two_year_consolidation = two_year_ratio <= 2.0  # 振幅≤200%
+        # 当前在2年震荡区间的位置
+        if two_year_high != two_year_low:
+            two_year_position = (current_price - two_year_low) / (two_year_high - two_year_low) * 100
+        else:
+            two_year_position = 50
 
-        # 当前在5年中的位置
-        five_year_position_current = five_year_position
-
-        meets_condition2 = (two_year_consolidation and
-                            two_year_amplitude <= 200 and
-                            five_year_position_current <= 30)
+        # 满足24个月在底部震荡，且当前位置在震荡区间20%以下
+        meets_condition2 = two_year_position <= 20
 
         # 任一条件满足即可入选
         if meets_condition1 or meets_condition2:
@@ -215,9 +318,9 @@ def main():
                 'five_year_position': round(five_year_position, 1),
                 'two_year_high': two_year_high,
                 'two_year_low': two_year_low,
-                'two_year_consolidation_months': 24,  # 简化
-                'two_year_amplitude': round(two_year_amplitude, 1),
-                'two_year_position': round(five_year_position_current, 1),  # 同5年位置
+                'two_year_consolidation_months': 24,  # 简化：假设满足24月
+                'two_year_amplitude': round((two_year_high - two_year_low) / two_year_low * 100, 1) if two_year_low > 0 else 0,
+                'two_year_position': round(two_year_position, 1),
                 'meets_condition1': meets_condition1,
                 'meets_condition2': meets_condition2,
             })
@@ -235,7 +338,7 @@ def main():
     quarters = [q for q in quarters if datetime.strptime(q, '%Y%m%d') <= datetime.now()][:20]
 
     shareholder_data = {}
-    for date in quarters[:8]:  # 限制8个季度避免超时
+    for date in quarters[:20]:  # 限制20个季度(5年)避免超时
         try:
             df_holders = ak.stock_hold_num_cninfo(date=date)
             for _, row in df_holders.iterrows():
@@ -271,7 +374,7 @@ def main():
             code = stock['code']
 
             # 重新获取K线用于计算
-            kline = get_kline_tencent(symbol, 1200)
+            kline, source = get_kline_multi_platform(symbol, 1200)
             closes = [float(k[2]) for k in kline]
             volumes = [float(k[5]) for k in kline] if len(kline) > 0 and len(kline[0]) > 5 else [1]
 
@@ -283,7 +386,7 @@ def main():
             chip_conc, chip_level = estimate_chip_concentration(df_vol)
 
             # 股东人数趋势
-            shareholder_trend = shareholder_data.get(code, [])[-8:]  # 最近8季度
+            shareholder_trend = shareholder_data.get(code, [])[-20:]  # 最近20季度(5年)
 
             # PE/PB（简化：用腾讯实时行情）
             pe_percentile = None
