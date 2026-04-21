@@ -132,6 +132,264 @@ def get_kline_eastmoney(symbol, count=1200):
         result.append([parts[0], parts[1], parts[2], parts[3], parts[4], parts[5]])
     return result
 
+# ============ 股东人数多平台获取 ============
+
+def get_shareholder_data_cninfo(ak, date):
+    """巨潮数据-股东人数"""
+    try:
+        df = ak.stock_hold_num_cninfo(date=date)
+        result = {}
+        for _, row in df.iterrows():
+            code = str(row.get('证券代码', '')).zfill(6)
+            shareholders = row.get('本期股东人数', 0)
+            if pd.notna(shareholders):
+                result[code] = {
+                    'shareholders': int(shareholders),
+                    'change_percent': float(row.get('股东人数增幅', 0)) if pd.notna(row.get('股东人数增幅')) else None
+                }
+        return result, 'cninfo'
+    except Exception as e:
+        return {}, f'cninfo_fail:{e}'
+
+def get_shareholder_data_eastmoney(ak, date):
+    """东方财富-股东人数"""
+    try:
+        # 东方财富季报股东数据
+        df = ak.stock_shareholder_change_eastmoney(indicator="按报告期", date=date)
+        result = {}
+        for _, row in df.iterrows():
+            code = str(row.get('股票代码', '')).zfill(6)
+            shareholders = row.get('股东人数', 0)
+            if pd.notna(shareholders):
+                result[code] = {
+                    'shareholders': int(shareholders),
+                    'change_percent': float(row.get('股东人数变化', 0)) if pd.notna(row.get('股东人数变化')) else None
+                }
+        return result, 'eastmoney'
+    except Exception as e:
+        return {}, f'eastmoney_fail:{e}'
+
+def get_shareholder_data_tencent(code):
+    """腾讯-股东人数（通过实时行情获取）"""
+    try:
+        url = f'https://qt.gtimg.cn/q=sz{code}'
+        r = requests.get(url, headers=get_headers(), timeout=5)
+        parts = r.text.split('~')
+        if len(parts) > 46:
+            shareholders = parts[46]  # 股东人数字段
+            if shareholders and shareholders.isdigit():
+                return {code: {'shareholders': int(shareholders), 'change_percent': None}}, 'tencent'
+        return {}, 'tencent_fail'
+    except Exception as e:
+        return {}, f'tencent_fail:{e}'
+
+def get_shareholder_trend_multi_platform(ak, code, quarters):
+    """多平台获取股东人数趋势"""
+    shareholder_data = {}
+
+    # 平台1: 巨潮数据
+    for date in quarters:
+        data, source = get_shareholder_data_cninfo(ak, date)
+        if data:
+            shareholder_data = data
+            break
+
+    # 平台2: 东方财富
+    if not shareholder_data:
+        for date in quarters:
+            data, source = get_shareholder_data_eastmoney(ak, date)
+            if data:
+                shareholder_data = data
+                break
+
+    # 平台3: 腾讯
+    if not shareholder_data:
+        data, source = get_shareholder_data_tencent(code)
+        if data:
+            shareholder_data = data
+
+    return shareholder_data
+
+# ============ PE/PB多平台获取 ============
+
+def get_pe_pb_eastmoney(symbol):
+    """东方财富-PE/PB百分位"""
+    try:
+        # 东方财富估值数据
+        url = 'http://push2.eastmoney.com/api/qt/stock/get'
+        if symbol.startswith('sh'):
+            secid = f'1.{symbol[2:]}'
+        else:
+            secid = f'0.{symbol[2:]}'
+        params = {
+            'secid': secid,
+            'fields': 'f57,f58,f162,f167,f168,f169,f170,f171'  # PE/PB相关字段
+        }
+        r = requests.get(url, params=params, headers=get_headers(), timeout=10)
+        data = r.json()
+        if data.get('data'):
+            f57 = data['data'].get('f57')  # PE
+            f162 = data['data'].get('f162')  # PB
+            return {'pe': f57, 'pb': f162}, 'eastmoney'
+        return None, 'eastmoney_no_data'
+    except Exception as e:
+        return None, f'eastmoney_fail:{e}'
+
+def get_pe_pb_sina(symbol):
+    """新浪-PE/PB百分位"""
+    try:
+        url = f'https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/Market_Center.getHQNodeData'
+        params = {
+            'page': 1,
+            'num': 1,
+            'sort': 'symbol',
+            'asc': 1,
+            'node': 'hs_a',
+            'symbol': symbol.upper(),
+            '_s_r_a': 'page'
+        }
+        r = requests.get(url, params=params, headers=get_headers(), timeout=10)
+        data = r.json()
+        if data and len(data) > 0:
+            return {'pe': data[0].get('pe'), 'pb': data[0].get('pb')}, 'sina'
+        return None, 'sina_no_data'
+    except Exception as e:
+        return None, f'sina_fail:{e}'
+
+def get_pe_pb_ths(code):
+    """同花顺-PE/PB百分位"""
+    try:
+        url = f'http://d.10jqka.com.cn/v4/stock/{code}/hsi_ajax.html'
+        r = requests.get(headers=get_headers(), timeout=10)
+        data = r.json()
+        if data.get('zgzql') and data['zgzql'] != 'N/A':
+            return {'pe': float(data['zgzql']), 'pb': None}, 'ths'
+        return None, 'ths_no_data'
+    except Exception as e:
+        return None, f'ths_fail:{e}'
+
+def get_pe_pb_multi_platform(symbol):
+    """多平台获取PE/PB数据"""
+    # 平台1: 东方财富
+    data, source = get_pe_pb_eastmoney(symbol)
+    if data and (data.get('pe') or data.get('pb')):
+        return data, source
+
+    # 平台2: 新浪
+    data, source = get_pe_pb_sina(symbol)
+    if data and (data.get('pe') or data.get('pb')):
+        return data, source
+
+    # 平台3: 同花顺
+    code = symbol[2:]
+    data, source = get_pe_pb_ths(code)
+    if data and (data.get('pe') or data.get('pb')):
+        return data, source
+
+    return None, 'none'
+
+# ============ ST风险多平台获取 ============
+
+def get_st_risk_cninfo(ak, code):
+    """巨潮数据-ST风险判断"""
+    try:
+        # 获取最近2年财务数据
+        df = ak.stock_financial_analysis_indicator(symbol=code)
+        if df is None or df.empty:
+            return None, None, 'cninfo_no_data'
+
+        # 检查连续亏损
+        # 净利润为负的年份数
+        years = df['报告日期'].tail(8) if len(df) >= 8 else df['报告日期']
+        negative_count = 0
+        for _, row in df.tail(8).iterrows():
+            net_profit = row.get('净利润', 0)
+            if pd.notna(net_profit) and net_profit < 0:
+                negative_count += 1
+
+        reasons = []
+        if negative_count >= 2:
+            reasons.append('连续2年以上亏损')
+
+        # 净资产为负
+        if len(df) > 0:
+            latest = df.iloc[-1]
+            net_assets = latest.get('净资产', 0)
+            if pd.notna(net_assets) and net_assets < 0:
+                reasons.append('净资产为负')
+
+        has_risk = len(reasons) > 0
+        return has_risk, reasons, 'cninfo'
+    except Exception as e:
+        return None, None, f'cninfo_fail:{e}'
+
+def get_st_risk_eastmoney(ak, code):
+    """东方财富-ST风险判断"""
+    try:
+        df = ak.stock_financial_benefit_sina(symbol=code)
+        if df is None or df.empty:
+            return None, None, 'em_no_data'
+
+        reasons = []
+        # 检查最近2年是否亏损
+        if len(df) >= 2:
+            profits = df['净利润'].tail(2)
+            if all(p < 0 for p in profits if pd.notna(p)):
+                reasons.append('连续2年亏损')
+
+        # 营业收入<1亿
+        if len(df) > 0:
+            revenue = df.iloc[-1].get('营业总收入', 0)
+            if pd.notna(revenue) and revenue < 100000000:
+                reasons.append('营收<1亿')
+
+        has_risk = len(reasons) > 0
+        return has_risk, reasons, 'eastmoney'
+    except Exception as e:
+        return None, None, f'eastmoney_fail:{e}'
+
+def get_st_risk_ths(code):
+    """同花顺-ST风险判断"""
+    try:
+        url = f'http://d.10jqka.com.cn/v4/stock/{code}/gaoyong_ajax.html'
+        r = requests.get(headers=get_headers(), timeout=10)
+        data = r.json()
+        reasons = []
+
+        # 检查是否ST
+        if data.get('name', '').startswith('*ST') or data.get('name', '').startswith('ST'):
+            reasons.append('股票被ST')
+
+        # 净利润
+        profits = data.get('净利润', [])
+        if len(profits) >= 2:
+            if all(p < 0 for p in profits[-2:] if p):
+                reasons.append('连续2年亏损')
+
+        has_risk = len(reasons) > 0
+        return has_risk, reasons, 'ths'
+    except Exception as e:
+        return None, None, f'ths_fail:{e}'
+
+def get_st_risk_multi_platform(ak, code):
+    """多平台获取ST风险判断"""
+    # 平台1: 巨潮数据
+    has_risk, reasons, source = get_st_risk_cninfo(ak, code)
+    if has_risk is not None:
+        return has_risk, reasons, source
+
+    # 平台2: 东方财富
+    has_risk, reasons, source = get_st_risk_eastmoney(ak, code)
+    if has_risk is not None:
+        return has_risk, reasons, source
+
+    # 平台3: 同花顺
+    has_risk, reasons, source = get_st_risk_ths(code)
+    if has_risk is not None:
+        return has_risk, reasons, source
+
+    return False, [], 'none'
+
 OUTPUT_FILE = '/root/stock-picker-data/stock_data.json'
 LOG_FILE = '/root/stock-picker-data/scan_v18.log'
 SCAN_LIMIT = None  # None=全量扫描
@@ -330,38 +588,12 @@ def main():
     # ====== Step3: 获取详细数据 ======
     log('[Step3] 获取详细数据...')
 
-    # 股东人数（获取20个季度的数据）
+    # 股东人数季度列表（用于后续逐只获取）
     quarters = []
     for year in [2024, 2023, 2022, 2021, 2020, 2019, 2018, 2017, 2016, 2015]:
         for month_day in ['1231', '0930', '0630', '0331']:
             quarters.append(f'{year}{month_day}')
     quarters = [q for q in quarters if datetime.strptime(q, '%Y%m%d') <= datetime.now()][:20]
-
-    shareholder_data = {}
-    for date in quarters[:20]:  # 限制20个季度(5年)避免超时
-        try:
-            df_holders = ak.stock_hold_num_cninfo(date=date)
-            for _, row in df_holders.iterrows():
-                code = str(row.get('证券代码', '')).zfill(6)
-                shareholders = row.get('本期股东人数', 0)
-                if pd.notna(shareholders):
-                    if code not in shareholder_data:
-                        shareholder_data[code] = []
-                    shareholder_data[code].append({
-                        'quarter': f'{date[:4]}Q{(int(date[4:6])-1)//3+1}',
-                        'shareholders': int(shareholders),
-                        'change_percent': float(row.get('股东人数增幅', 0)) if pd.notna(row.get('股东人数增幅')) else None
-                    })
-        except:
-            pass
-
-    # PE/PB历史百分位
-    pe_pb_data = {}
-    try:
-        df_pe = ak.stock_value_em(symbol='000001')  # 测试接口可用性
-        log('PE/PB接口可用')
-    except:
-        log('PE/PB接口不可用')
 
     # ====== Step4: 组装结果 ======
     log('[Step4] 组装结果数据...')
@@ -385,29 +617,48 @@ def main():
             df_vol = pd.DataFrame({'volume': volumes[-60:]})
             chip_conc, chip_level = estimate_chip_concentration(df_vol)
 
-            # 股东人数趋势
-            shareholder_trend = shareholder_data.get(code, [])[-20:]  # 最近20季度(5年)
+            # 股东人数趋势 - 多平台获取
+            shareholder_trend = []
+            for date in quarters[:20]:
+                data, source = get_shareholder_data_cninfo(ak, date)
+                if code in data:
+                    shareholder_trend.append({
+                        'quarter': f'{date[:4]}Q{(int(date[4:6])-1)//3+1}',
+                        'shareholders': data[code]['shareholders'],
+                        'change_percent': data[code]['change_percent']
+                    })
+                if len(shareholder_trend) >= 20:
+                    break
+            # 如果巨潮没有，尝试东方财富
+            if not shareholder_trend:
+                for date in quarters[:20]:
+                    data, source = get_shareholder_data_eastmoney(ak, date)
+                    if code in data:
+                        shareholder_trend.append({
+                            'quarter': f'{date[:4]}Q{(int(date[4:6])-1)//3+1}',
+                            'shareholders': data[code]['shareholders'],
+                            'change_percent': data[code]['change_percent']
+                        })
+                    if len(shareholder_trend) >= 20:
+                        break
 
-            # PE/PB（简化：用腾讯实时行情）
+            # PE/PB - 多平台获取
             pe_percentile = None
             pb_percentile = None
-            try:
-                qt_url = f'https://qt.gtimg.cn/q={symbol}'
-                r = requests.get(qt_url, timeout=5)
-                parts = r.text.split('~')
-                if len(parts) > 46:
-                    pe = parts[46] if parts[46] not in ['', '-', 'N/A'] else None
-                    # PE历史百分位简化
-                    if pe and pe.replace('.', '').isdigit():
-                        pe_percentile = min(100, max(0, float(pe) * 2))  # 估算
-            except:
-                pass
+            pe_pb_data, source = get_pe_pb_multi_platform(symbol)
+            if pe_pb_data:
+                if pe_pb_data.get('pe'):
+                    # PE百分位估算：PE越低，百分位越低
+                    pe = pe_pb_data['pe']
+                    if pe and pe > 0 and pe < 1000:
+                        pe_percentile = min(100, pe * 2)
+                if pe_pb_data.get('pb'):
+                    pb = pe_pb_data['pb']
+                    if pb and pb > 0 and pb < 100:
+                        pb_percentile = min(100, pb * 10)
 
-            # ST风险判断（简化）
-            has_st_risk = False
-            st_reasons = []
-            # 连续亏损检测需要财务数据，这里简化处理
-            # 实际应调用 ak.stock_financial_benefit_ths
+            # ST风险判断 - 多平台获取
+            has_st_risk, st_reasons, st_source = get_st_risk_multi_platform(ak, code)
 
             # 趋势分析
             if len(closes) >= 60:
