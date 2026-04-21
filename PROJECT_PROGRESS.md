@@ -115,3 +115,23 @@
 - [ ] 首次全量扫描（手动触发或等15:40）
 - [ ] Bundle数据更新（255只 → 4500+全市场）
 - [ ] 真机调试验证
+
+---
+
+## 自动同步
+
+**同步脚本**: `./sync_progress.sh`
+
+### 使用方式
+```bash
+# 手动同步
+./sync_progress.sh "更新说明"
+
+# 自动同步（每次重要操作后）
+git add -A && git commit -m "更新" && git push
+```
+
+### 包含文件
+- `PROJECT_PROGRESS.md` - 项目进度
+- `sync_progress.sh` - 同步脚本
+- 所有修改过的源码文件
